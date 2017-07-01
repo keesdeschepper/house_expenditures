@@ -1,0 +1,118 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+split off relevant cells
+```{r}
+personnel_purpose <- unlist(df[df$CATEGORY == "PERSONNEL COMPENSATION", "PURPOSE"])
+```
+
+function of how good a word is as full form for an abbreviation
+three component score:
+ do the begin letters of word and abbr match?
+ does the word occur frequently?
+ how long is the word (the longer the more full-form-like)?
+```{r}
+word_split <- "[^[:alpha:]]+"
+
+word_freq = as.data.frame(table(unlist(
+  strsplit(personnel_purpose, word_split , perl = TRUE)
+)))
+
+abbrMatchingStrength <- function(abbr, word) {
+  if (abbr == "" || word == ""){
+    return (0)
+  }
+  abbr_letters <- unlist(strsplit(abbr, "", perl=TRUE))
+  word_letters <- unlist(strsplit(word, "", perl=TRUE))
+  if (abbr_letters[1] != word_letters[1]){
+    return(0)
+  }
+  begin_letters <- 0
+  start <- 1
+  for (abbr_index in 1:nchar(abbr)) {
+    if (start > nchar(word)) {
+      return(0)
+    }
+    for (word_index in start:nchar(word)) {
+      if (abbr_letters[abbr_index] == word_letters[word_index]) {
+        if (abbr_index == word_index) {
+          begin_letters <- begin_letters + 1
+        }
+        start <- word_index + 1
+        break()
+      } else if (word_index == nchar(word)){
+        return(0)
+      }
+    }
+  }
+  freq_score <- word_freq[word_freq$Var1==word, "Freq"]
+  return (begin_letters * freq_score * log10(nchar(word)))
+}
+```
+
+store previous function
+```{r}
+match_strengths <- sapply(as.character(word_freq$Var1), function(abbr){
+  names(which.max(sapply(as.character(word_freq$Var1), function(word){
+    abbrMatchingStrength(abbr, word)
+  })))
+})
+```
+
+get the best full-form candidate  for an abbreviation
+```{r}
+getFull <- function(abbr){
+  if(is.na(match_strengths[abbr])){
+    return("")
+  }
+  if(match_strengths[abbr] == abbr){
+    return(abbr)
+  } else {
+    return(getFull(match_strengths[abbr]))
+  }
+}
+```
+
+store previous function
+```{r}
+fullVersions <- sapply(match_strengths, getFull)
+```
+
+function to clean up a cell
+words removed -- main categories:
+ a) bureaucratic personnel titles ("assistant", "director")
+ b) "(OTHER COMPENSATION)"
+ c) "(OVERTIME)"
+ each category could be separate column
+```{r}
+removable_words <- unlist(strsplit("ASSISTANT STAFF DIRECTOR OF CHIEF SENIOR PART-TIME INTERN OTHER COMPENSATION PAID SHARED MANAGER AIDE PROFESSIONAL ASST DIR OVERTIME SR OFFICE MEMBER POLICY SECRETARY COORDINATOR CLERK A TO TEMPORARY PROF AND FOR THE ADMINISTRATOR", " "))
+cleanLinePart <- function(line){
+  words <- unlist(strsplit(line, word_split, perl = TRUE));
+  words <- sapply(words, function(word){return(fullVersions[word])});
+  words <- words[!words %in% removable_words]
+  return(paste(words, collapse = " "))
+}
+```
+
+function to handle coordinate titles separately ("secretary" and "receptionist" in "secretary/receptionist")
+```{r}
+cleanFullLine <- function(line){
+  paste(sort(unlist(sapply (
+    unlist(strsplit(line, "[^[:alpha:]]*[/&][^[:alpha:]]*", perl = TRUE)), 
+    cleanLinePart
+  ))), collapse = " ")
+}
+```
+
+put new column in original dataframe
+```{r}
+house_expenditures_clean$PURPCONTENT <- sapply(1:nrow(house_expenditures_clean), function(index){
+  if (house_expenditures_clean$CATEGORY[index] == "PERSONNEL COMPENSATION"){
+    return(cleanFullLine(house_expenditures_clean$PURPOSE[index]))}
+  else {
+    return(NA)
+  }
+})
+```
